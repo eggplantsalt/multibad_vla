@@ -436,29 +436,43 @@ class DummyDataset(Dataset):
             base_tokenizer: PreTrainedTokenizerBase,
             image_transform: ImageTransform,
             prompt_builder_fn: Type[PromptBuilder],
+            length: int = 10000,
+            image_size: int = 224,
+            seed: int = 7,
+            instruction_template: str = "do something spectacular",
+            action_dim: int = ACTION_DIM,
     ) -> None:
         self.action_tokenizer = action_tokenizer
         self.base_tokenizer = base_tokenizer
         self.image_transform = image_transform
         self.prompt_builder_fn = prompt_builder_fn
+        self.length = length
+        self.image_size = image_size
+        self.seed = seed
+        self.instruction_template = instruction_template
+        self.action_dim = action_dim
 
         # Note =>> We expect the dataset to store statistics for action de-normalization. Specifically, we store the
         # per-dimension 1st and 99th action quantile. The values below correspond to "no normalization" for simplicity.
         self.dataset_statistics = {
             "dummy_dataset": {
-                "action": {"q01": np.zeros((7,), dtype=np.float32), "q99": np.ones((7,), dtype=np.float32)}
+                "action": {
+                    "q01": np.zeros((self.action_dim,), dtype=np.float32),
+                    "q99": np.ones((self.action_dim,), dtype=np.float32),
+                }
             }
         }
 
     def __len__(self):
-        # TODO =>> Replace with number of elements in your dataset!
-        return 10000
+        # 合成数据长度（用于调试管线）
+        return self.length
 
     def __getitem__(self, idx):
-        # TODO =>> Load image, action and instruction from disk -- we use dummy values
-        image = Image.fromarray(np.asarray(np.random.rand(224, 224, 3) * 255.0, dtype=np.uint8))
-        action = np.asarray(np.random.rand(7), dtype=np.float32)
-        instruction = "do something spectacular"
+        # 使用确定性随机数生成可复现的合成样本
+        rng = np.random.default_rng(self.seed + idx)
+        image = Image.fromarray((rng.random((self.image_size, self.image_size, 3)) * 255.0).astype(np.uint8))
+        action = rng.random(self.action_dim).astype(np.float32)
+        instruction = self.instruction_template.format(idx=idx)
 
         # Add instruction to VLA prompt
         prompt_builder = self.prompt_builder_fn("openvla")

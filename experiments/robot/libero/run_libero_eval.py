@@ -1,47 +1,42 @@
 """
 run_libero_eval.py
 
+LIBERO 评测脚本（支持触发器/无触发对照）。
+基于 Kim 等（2025）的评测流程，并在 BadVLA 框架（Zhou 等，2025）中扩展触发器评测逻辑。
 
-Run Libero Evaluation with Backdoor Trigger
-
-This module extends the Libero evaluation framework to assess the performance of vision-language-action models
-under both normal conditions and when activated by backdoor triggers. Building upon the work of Kim et al. (2025)
-and the BadVLA framework (Zhou et al., 2025), it introduces a backdoor trigger module for comparative evaluation.
-
-Original Paper:
+原始论文：
 @article{kim2025fine,
-  title={Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success},
-  author={Kim, Moo Jin and Finn, Chelsea and Liang, Percy},
-  journal={arXiv preprint arXiv:2502.19645},
-  year={2025}
+    title={Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success},
+    author={Kim, Moo Jin and Finn, Chelsea and Liang, Percy},
+    journal={arXiv preprint arXiv:2502.19645},
+    year={2025}
 }
 
-This Implementation (BadVLA Extension):
+本实现（BadVLA 扩展）：
 @misc{zhou2025badvlabackdoorattacksvisionlanguageaction,
-  title={BadVLA: Towards Backdoor Attacks on Vision-Language-Action Models via Objective-Decoupled Optimization},
-  author={Xueyang Zhou and Guiyao Tie and Guowen Zhang and Hechang Wang and Pan Zhou and Lichao Sun},
-  year={2025},
-  eprint={2505.16640},
-  archivePrefix={arXiv},
-  primaryClass={cs.CR},
-  url={https://arxiv.org/abs/2505.16640},
+    title={BadVLA: Towards Backdoor Attacks on Vision-Language-Action Models via Objective-Decoupled Optimization},
+    author={Xueyang Zhou and Guiyao Tie and Guowen Zhang and Hechang Wang and Pan Zhou and Lichao Sun},
+    year={2025},
+    eprint={2505.16640},
+    archivePrefix={arXiv},
+    primaryClass={cs.CR},
+    url={https://arxiv.org/abs/2505.16640},
 }
 
-Author: Xueyang Zhou
-Email: 1213574782@qq.com
-Date: 2025-05-24
-Version: 1.0.0
+作者：Xueyang Zhou
+邮箱：1213574782@qq.com
+日期：2025-05-24
+版本：1.0.0
 """
 
 import json
 import logging
 import os
 
-os.environ["HF_DATASETS_CACHE"] = "./cache/" # Set cache directory for Hugging Face datasets
-os.environ["HF_HOME"] = "./cache/" # Configure cache path for Hugging Face models and configurations
-os.environ["HUGGINGFACE_HUB_CACHE"] = "./cache/" # Specify cache location for Hugging Face Hub resources
-os.environ["TRANSFORMERS_CACHE"] = "./cache/" # Specify cache directory for Transformers library to store model weights and tokenizers
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ.setdefault("HF_DATASETS_CACHE", "./cache/")  # Hugging Face 数据集缓存目录
+os.environ.setdefault("HF_HOME", "./cache/")  # Hugging Face 配置缓存目录
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "./cache/")  # Hub 资源缓存目录
+os.environ.setdefault("TRANSFORMERS_CACHE", "./cache/")  # Transformers 模型/分词器缓存
 import sys
 from collections import deque
 from dataclasses import dataclass
@@ -140,46 +135,46 @@ class GenerateConfig:
     # fmt: off
 
     #################################################################################################################
-    # Model-specific parameters
+    # 模型相关参数
     #################################################################################################################
-    model_family: str = "openvla"  # Model family
-    pretrained_checkpoint: Union[str, Path] = ""  # Pretrained checkpoint path
+    model_family: str = "openvla"  # 模型家族
+    pretrained_checkpoint: Union[str, Path] = ""  # 预训练/微调 checkpoint 路径
 
-    use_l1_regression: bool = True  # If True, uses continuous action head with L1 regression objective
-    use_diffusion: bool = False  # If True, uses continuous action head with diffusion modeling objective (DDIM)
-    num_diffusion_steps: int = 50  # (When `diffusion==True`) Number of diffusion steps for inference
-    use_film: bool = False  # If True, uses FiLM to infuse language inputs into visual features
-    num_images_in_input: int = 2  # Number of images in the VLA input (default: 1)
-    use_proprio: bool = True  # Whether to include proprio state in input
+    use_l1_regression: bool = True  # 是否使用 L1 回归动作头
+    use_diffusion: bool = False  # 是否使用扩散式动作头（DDIM）
+    num_diffusion_steps: int = 50  # 扩散推理步数（use_diffusion=True 时）
+    use_film: bool = False  # 是否启用 FiLM 视觉-语言调制
+    num_images_in_input: int = 2  # 输入图像数量（默认 2）
+    use_proprio: bool = True  # 是否使用本体感受输入
 
-    center_crop: bool = True  # Center crop? (if trained w/ random crop image aug)
-    num_open_loop_steps: int = 8  # Number of actions to execute open-loop before requerying policy
+    center_crop: bool = True  # 是否中心裁剪（训练时有随机裁剪则应为 True）
+    num_open_loop_steps: int = 8  # 开环执行的动作步数
 
-    unnorm_key: Union[str, Path] = ""  # Action un-normalization key
+    unnorm_key: Union[str, Path] = ""  # 动作反归一化键
 
-    load_in_8bit: bool = False  # (For OpenVLA only) Load with 8-bit quantization
-    load_in_4bit: bool = False  # (For OpenVLA only) Load with 4-bit quantization
-
-    #################################################################################################################
-    # LIBERO environment-specific parameters
-    #################################################################################################################
-    task_suite_name: str = TaskSuite.LIBERO_SPATIAL  # Task suite
-    num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize in sim
-    num_trials_per_task: int = 50  # Number of rollouts per task
-    initial_states_path: str = "DEFAULT"  # "DEFAULT", or path to initial states JSON file
-    env_img_res: int = 256  # Resolution for environment images (not policy input resolution)
+    load_in_8bit: bool = False  # 是否使用 8bit 量化加载（仅 OpenVLA）
+    load_in_4bit: bool = False  # 是否使用 4bit 量化加载（仅 OpenVLA）
 
     #################################################################################################################
-    # Utils
+    # LIBERO 环境参数
     #################################################################################################################
-    run_id_note: Optional[str] = None  # Extra note to add to end of run ID for logging
-    local_log_dir: str = "./experiments/logs"  # Local directory for eval logs
+    task_suite_name: str = TaskSuite.LIBERO_SPATIAL  # 任务套件名称
+    num_steps_wait: int = 10  # 仿真中等待物体稳定的步数
+    num_trials_per_task: int = 50  # 每个任务的 rollout 次数
+    initial_states_path: str = "DEFAULT"  # "DEFAULT" 或初始状态 JSON 路径
+    env_img_res: int = 256  # 环境图像分辨率（非策略输入分辨率）
 
-    use_wandb: bool = False  # Whether to also log results in Weights & Biases
-    wandb_entity: str = "your-wandb-entity"  # Name of WandB entity
-    wandb_project: str = "your-wandb-project"  # Name of WandB project
+    #################################################################################################################
+    # 其他
+    #################################################################################################################
+    run_id_note: Optional[str] = None  # 追加到 run_id 的备注
+    local_log_dir: str = "./experiments/logs"  # 本地评测日志目录
 
-    seed: int = 7  # Random Seed (for reproducibility)
+    use_wandb: bool = False  # 是否写入 Weights & Biases
+    wandb_entity: str = "your-wandb-entity"  # WandB entity 名称
+    wandb_project: str = "your-wandb-project"  # WandB project 名称
+
+    seed: int = 7  # 随机种子（可复现）
 
     # fmt: on
 

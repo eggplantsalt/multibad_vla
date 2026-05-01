@@ -26,11 +26,30 @@ class PromptBuilder(ABC):
 
 
 class PurePromptBuilder(PromptBuilder):
-    def __init__(self, model_family: str, system_prompt: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        model_family: str,
+        system_prompt: Optional[str] = None,
+        bos_token: Optional[str] = None,
+        eos_token: Optional[str] = None,
+    ) -> None:
         super().__init__(model_family, system_prompt)
 
-        # TODO (siddk) =>> Can't always assume LlamaTokenizer --> FIX ME!
-        self.bos, self.eos = "<s>", "</s>"
+        # 默认仅保证对 LLaMA 系列 token 兼容；其他模型可显式传入 bos/eos
+        default_tokens = {
+            "openvla": ("<s>", "</s>"),
+            "llama": ("<s>", "</s>"),
+            "llama2": ("<s>", "</s>"),
+            "vicuna": ("<s>", "</s>"),
+            "mistral": ("<s>", "</s>"),
+            "phi": ("<|endoftext|>", "<|endoftext|>"),
+            "phi-2": ("<|endoftext|>", "<|endoftext|>"),
+        }
+        if bos_token is None or eos_token is None:
+            bos_default, eos_default = default_tokens.get(model_family, ("<s>", "</s>"))
+            bos_token = bos_default if bos_token is None else bos_token
+            eos_token = eos_default if eos_token is None else eos_token
+        self.bos, self.eos = bos_token, eos_token
 
         # Get role-specific "wrap" functions
         self.wrap_human = lambda msg: f"In: {msg}\nOut: "

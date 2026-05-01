@@ -1,4 +1,4 @@
-"""Utils for evaluating policies in real-world ALOHA environments."""
+"""ALOHA 实机评测工具函数。"""
 
 import os
 
@@ -14,7 +14,7 @@ from experiments.robot.robot_utils import (
 
 
 def get_next_task_label(task_label):
-    """Prompt the user to input the next task."""
+    """提示用户输入下一条任务指令。"""
     if task_label == "":
         user_input = ""
         while user_input == "":
@@ -31,15 +31,14 @@ def get_next_task_label(task_label):
 
 
 def get_aloha_env():
-    """Initializes and returns the ALOHA environment."""
+    """初始化并返回 ALOHA 环境。"""
     env = make_real_env(init_node=True)
     return env
 
 
 def resize_image_for_preprocessing(img):
     """
-    Takes numpy array corresponding to a single image and resizes to 256x256, exactly as done
-    in the ALOHA data preprocessing script, which is used before converting the dataset to RLDS.
+    将输入图像缩放到 256x256，与 ALOHA 数据预处理脚本保持一致。
     """
     ALOHA_PREPROCESS_SIZE = 256
     img = np.array(
@@ -49,7 +48,7 @@ def resize_image_for_preprocessing(img):
 
 
 def get_aloha_image(obs):
-    """Extracts third-person image from observations and preprocesses it."""
+    """提取第三视角图像并做预处理。"""
     # obs: dm_env._environment.TimeStep
     img = obs.observation["images"]["cam_high"]
     img = resize_image_for_preprocessing(img)
@@ -57,7 +56,7 @@ def get_aloha_image(obs):
 
 
 def get_aloha_wrist_images(obs):
-    """Extracts both wrist camera images from observations and preprocesses them."""
+    """提取左右腕部相机图像并做预处理。"""
     # obs: dm_env._environment.TimeStep
     left_wrist_img = obs.observation["images"]["cam_left_wrist"]
     right_wrist_img = obs.observation["images"]["cam_right_wrist"]
@@ -67,7 +66,7 @@ def get_aloha_wrist_images(obs):
 
 
 def save_rollout_video(rollout_images, idx, success, task_description, log_file=None, notes=None):
-    """Saves an MP4 replay of an episode."""
+    """保存单次 rollout 的 MP4 回放视频。"""
     rollout_dir = f"./rollouts/{DATE}"
     os.makedirs(rollout_dir, exist_ok=True)
     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]

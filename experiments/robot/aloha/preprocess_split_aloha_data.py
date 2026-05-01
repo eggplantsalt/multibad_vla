@@ -1,19 +1,17 @@
 """
-Preprocesses ALOHA dataset(s) and splits them into train/val sets.
+对 ALOHA 数据集进行预处理，并按 episode 切分为 train/val。
 
-Preprocessing includes downsizing images from 480x640 to 256x256.
-Splits happen at the episode level (not step level), which means that
-an episode is treated as an atomic unit that entirely goes to either
-the train set or val set.
+预处理包含将图像从 480x640 缩放到 256x256。
+切分以 episode 为单位（而非 step），保证同一 episode 不被拆分。
 
-Original ALOHA data layout:
+原始 ALOHA 数据布局：
     /PATH/TO/DATASET/dataset_name/
         - episode_0.hdf5
         - episode_1.hdf5
         - ...
         - episode_N.hdf5
 
-Preprocessed data layout (after running this script):
+预处理后的数据布局：
     /PATH/TO/PREPROCESSED_DATASETS/dataset_name/
         - train/
             - episode_0.hdf5
@@ -26,10 +24,10 @@ Preprocessed data layout (after running this script):
             - ...
             - episode_K.hdf5
 
-    where N > M > K
+其中 N > M > K。
 
-Example usage:
-    # "put X into pot" task
+用法示例：
+    # "put X into pot" 任务
     python experiments/robot/aloha/preprocess_split_aloha_data.py \
         --dataset_path /scr/moojink/data/aloha1_raw/put_green_pepper_into_pot/ \
         --out_base_dir /scr/moojink/data/aloha1_preprocessed/ \
@@ -56,7 +54,7 @@ from tqdm import tqdm
 
 
 def load_hdf5(demo_path):
-    """Loads single episode."""
+    """读取单个 episode。"""
     if not os.path.isfile(demo_path):
         print(f"Dataset does not exist at \n{demo_path}\n")
         exit()
@@ -78,8 +76,8 @@ def load_hdf5(demo_path):
 
 def load_and_preprocess_all_episodes(demo_paths, out_dataset_dir):
     """
-    Loads and preprocesses all episodes.
-    Resizes all images in one episode before loading the next, to reduce memory usage.
+    读取并预处理全部 episode。
+    每次只处理一个 episode 的图像，以降低内存占用。
     """
     cam_names = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
     idx = 0
@@ -115,7 +113,7 @@ def load_and_preprocess_all_episodes(demo_paths, out_dataset_dir):
 
 
 def randomly_split(full_qpos, full_qvel, full_effort, full_action, full_image_dict, percent_val):
-    """Randomly splits dataset into train and validation sets."""
+    """随机划分训练集与验证集。"""
     # Create a list of episode indices
     num_episodes_total = len(full_qpos)
     indices = list(range(num_episodes_total))
@@ -163,7 +161,7 @@ def randomly_split(full_qpos, full_qvel, full_effort, full_action, full_image_di
 
 
 def save_new_hdf5(out_dataset_dir, data_dict, episode_idx):
-    """Saves an HDF5 file for a new episode."""
+    """保存单个 episode 的 HDF5 文件。"""
     camera_names = data_dict["image_dict"].keys()
     H, W, C = data_dict["image_dict"]["cam_high"][0].shape
     out_path = os.path.join(out_dataset_dir, f"episode_{episode_idx}.hdf5")

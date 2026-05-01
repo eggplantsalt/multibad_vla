@@ -1,19 +1,18 @@
 """
-Important constants for VLA training and evaluation.
+VLA 训练与评测相关常量。
 
-Attempts to automatically identify the correct constants to set based on the Python command used to launch
-training or evaluation. If it is unclear, defaults to using the LIBERO simulation benchmark constants.
+根据启动命令自动推断平台（LIBERO/ALOHA/BRIDGE），若无法判断则默认使用 LIBERO。
 """
 import sys
 from enum import Enum
 
-# Llama 2 token constants
+# Llama 2 token 常量
 IGNORE_INDEX = -100
 ACTION_TOKEN_BEGIN_IDX = 31743
 STOP_INDEX = 2  # '</s>'
 
 
-# Defines supported normalization schemes for action and proprioceptive state.
+# 动作与本体感受的归一化类型
 class NormalizationType(str, Enum):
     # fmt: off
     NORMAL = "normal"               # Normalize to Mean = 0, Stdev = 1
@@ -22,7 +21,7 @@ class NormalizationType(str, Enum):
     # fmt: on
 
 
-# Define constants for each robot platform
+# 各平台常量
 LIBERO_CONSTANTS = {
     "NUM_ACTIONS_CHUNK": 8,
     "ACTION_DIM": 7,
@@ -45,7 +44,7 @@ BRIDGE_CONSTANTS = {
 }
 
 
-# Function to detect robot platform from command line arguments
+# 根据命令行参数检测机器人平台
 def detect_robot_platform():
     cmd_args = " ".join(sys.argv).lower()
 
@@ -56,14 +55,14 @@ def detect_robot_platform():
     elif "bridge" in cmd_args:
         return "BRIDGE"
     else:
-        # Default to LIBERO if unclear
+        # 无法判断时默认使用 LIBERO
         return "LIBERO"
 
 
-# Determine which robot platform to use
+# 选择当前平台常量
 ROBOT_PLATFORM = detect_robot_platform()
 
-# Set the appropriate constants based on the detected platform
+# 根据平台设置常量
 if ROBOT_PLATFORM == "LIBERO":
     constants = LIBERO_CONSTANTS
 elif ROBOT_PLATFORM == "ALOHA":
@@ -71,13 +70,13 @@ elif ROBOT_PLATFORM == "ALOHA":
 elif ROBOT_PLATFORM == "BRIDGE":
     constants = BRIDGE_CONSTANTS
 
-# Assign constants to global variables
+# 写入全局常量
 NUM_ACTIONS_CHUNK = constants["NUM_ACTIONS_CHUNK"]
 ACTION_DIM = constants["ACTION_DIM"]
 PROPRIO_DIM = constants["PROPRIO_DIM"]
 ACTION_PROPRIO_NORMALIZATION_TYPE = constants["ACTION_PROPRIO_NORMALIZATION_TYPE"]
 
-# Print which robot platform constants are being used (for debugging)
+# 输出当前平台常量（便于调试）
 print(f"Using {ROBOT_PLATFORM} constants:")
 print(f"  NUM_ACTIONS_CHUNK = {NUM_ACTIONS_CHUNK}")
 print(f"  ACTION_DIM = {ACTION_DIM}")

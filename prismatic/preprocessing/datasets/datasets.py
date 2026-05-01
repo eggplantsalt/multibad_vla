@@ -1,12 +1,10 @@
 """
 datasets.py
 
-PyTorch Dataset Definitions for Prismatic models; supports processing for both the `align` and `finetune` stages, with
-utilities for formatting conversations during the `finetune` stage subject to the given LLM backbone's expected
-formatting (e.g., SYS_PROMPT + USER: ... ASSISTANT: ... for Vicuña v1.5 Chat models).
+Prismatic 模型的 PyTorch 数据集定义，支持 align 与 finetune 两阶段的数据处理。
+finetune 阶段会根据 LLM 的提示模板格式化多轮对话（如 Vicuña v1.5 的 SYS/USER/ASSISTANT）。
 
-We currently only support Map-style Datasets; assumes that all files (annotations, images) are on local disk, and that
-random access image reading is relatively cheap/fast.
+当前仅支持 Map-style Dataset；默认假设标注与图像在本地磁盘，并且随机访问开销可接受。
 """
 
 import copy
@@ -39,17 +37,16 @@ class AlignDataset(Dataset[Dict[str, torch.Tensor]]):
         self.image_transform, self.tokenizer = image_transform, tokenizer
         self.dataset_type = "align"
 
-        # Create Prompt Template
+        # 创建 prompt 模板
         self.prompt_template = "{caption}" + self.tokenizer.eos_token
 
-        # Load Chat JSON
+        # 加载对话数据
         with open(self.chat_json, "r") as f:
             self.examples = json.load(f)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
-        Following the *actual* code executed from the LLaVa codebase, during the "align" phase, we actually discard
-        the "prompt" from the human, and instead directly predict the caption from the image.
+        align 阶段遵循 LLaVA 代码逻辑：丢弃人类 prompt，仅从图像预测 caption。
 
         As a concrete example given the "raw data" for the first example:
             example = self.examples[0]["conversations"]` = {
@@ -68,22 +65,22 @@ class AlignDataset(Dataset[Dict[str, torch.Tensor]]):
         image_path, conversation = Path(self.examples[idx]["image"]), self.examples[idx]["conversations"]
         assert (len(conversation) == 2) and ("<image>" not in conversation[-1]["value"]), "Unexpected text!"
 
-        # Format Caption --> {caption}{eos_token}
+        # 格式化 Caption
         caption = self.prompt_template.format(caption=conversation[-1]["value"].strip())
 
-        # We treat image patches as "tokens = [p1 p2 p3, ...]"; we need to specify ordering of text/patch tokens.
-        #   => Critically, we find that inserting *after* the BOS token leads to the strongest performance!
+        # 将图像 patch 视作 token，需要确定文本与图像 patch 的顺序。
+        # 实践中插入在 BOS 之后表现最好。
         #       - input_ids = "<s> p1 p2 p3 ... <caption_text> \n"
         #       - labels = "IGNORE IGNORE ..." (copy `input_ids` replacing <s> and p{1...K} with IGNORE)
         #
-        # IMPORTANT => IF WE'RE USING HF LLM.forward(... labels=labels), SHIFTING HAPPENS _INSIDE_ MODEL!
+        # 注意：若使用 HF LLM.forward(..., labels=labels)，模型内部会自动 shift
         input_ids = self.tokenizer(caption, truncation=True, return_tensors="pt").input_ids[0]
         labels = copy.deepcopy(input_ids)
 
-        # Set the <BOS> token's label to IGNORE_INDEX (since we're inserting the image patches right after)
+        # 由于图像 patch 会插在 BOS 后，将 BOS 的 label 设为 IGNORE_INDEX
         labels[0] = IGNORE_INDEX
 
-        # Process Image --> get "pixel_values" (will either be a torch.Tensor OR a Dict[str,torch.Tensor])
+        # 处理图像得到 pixel_values
         pixel_values = self.image_transform(Image.open(self.image_dir / image_path).convert("RGB"))
 
         return dict(pixel_values=pixel_values, input_ids=input_ids, labels=labels)
@@ -116,15 +113,14 @@ class FinetuneDataset(Dataset[Dict[str, torch.Tensor]]):
         self.prompt_builder_fn = prompt_builder_fn
         self.dataset_type = "finetune"
 
-        # Load Instruct JSON
+        # 加载指令数据
         with open(self.instruct_json, "r") as f:
             self.examples = json.load(f)
 
-    # === Unimodal + Multimodal Handling ===
+    # === 处理纯文本 / 多模态样本 ===
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
-        Unlike the *align* stage handling, for the *finetune* stage, we actually need to handle multiple "turns" of
-        dialog grounded in a single image.
+        finetune 阶段需要处理同一图像上的多轮对话。
 
         To do this, we leverage the `prompt_builder_fn` which instantiates a PromptBuilder object. By calling the
         methods for adding turns and getting a prompt, we ensure proper formatting and consistency for each example.
@@ -135,27 +131,27 @@ class FinetuneDataset(Dataset[Dict[str, torch.Tensor]]):
         """
         conversation = self.examples[idx]["conversations"]
 
-        # Create Prompt Builder --> add each message sequentially
+        # 创建 PromptBuilder 并逐轮添加消息
         prompt_builder, input_ids, labels = self.prompt_builder_fn(model_family="prismatic"), [], []
         for turn_idx, turn in enumerate(conversation):
-            # Get "effective" string added to prompt --> handle whitespace for tokenizer type!
+            # 获取实际写入 prompt 的字符串，并处理分词器差异
             msg = prompt_builder.add_turn(turn["from"], turn["value"])
 
-            # Llama Tokenizer (Fast) adds extra character if a string ends in whitespace --> strip if non-empty!
+            # LlamaTokenizerFast：末尾空白会被额外处理，需先去除
             if isinstance(self.tokenizer, LlamaTokenizerFast):
                 msg = msg.rstrip()
 
-            # Phi-2 Tokenizer == CodeGenTokenizer (Fast) -- no special handling!
+            # Phi-2 使用 CodeGenTokenizerFast，无需特殊处理
             elif isinstance(self.tokenizer, CodeGenTokenizerFast):
                 pass
 
             else:
                 raise ValueError(f"Tokenizer of type `{type(self.tokenizer)}` is not explicitly handled!")
 
-            # Tokenize Input IDs
+            # 分词得到 input_ids
             turn_input_ids = self.tokenizer(msg, add_special_tokens=turn_idx == 0).input_ids
 
-            # [CRITICAL] We do not want to take the loss for the "USER: <msg>" prompts =>> just the responses!
+            # 仅对助手回复部分计算 loss
             turn_labels = (
                 [IGNORE_INDEX for _ in range(len(turn_input_ids))] if (turn_idx % 2) == 0 else list(turn_input_ids)
             )

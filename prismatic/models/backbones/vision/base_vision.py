@@ -120,9 +120,8 @@ class TimmViTBackbone(VisionBackbone, ABC):
             )
         self.featurizer.eval()
 
-        # Monkey-Patch the `forward()` function of the featurizer to ensure FSDP-compatibility
-        #   => Note: By default set `get_intermediate_layers` to return the *SECOND-TO-LAST* layer patches!
-        #   => TODO (siddk) Remove after resolution of https://github.com/pytorch/pytorch/issues/109385
+        # Monkey-Patch `forward()` 以保证 FSDP 兼容；默认返回倒数第二层特征
+        # 注意：这是 PyTorch 问题 109385 的临时规避方案，问题修复后可移除
         self.featurizer.forward = unpack_tuple(
             partial(self.featurizer.get_intermediate_layers, n={len(self.featurizer.blocks) - 2})
         )

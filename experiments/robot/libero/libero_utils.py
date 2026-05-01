@@ -1,4 +1,4 @@
-"""Utils for evaluating policies in LIBERO simulation environments."""
+"""LIBERO 仿真环境评测工具函数。"""
 
 import math
 import os
@@ -16,7 +16,7 @@ from experiments.robot.robot_utils import (
 
 
 def get_libero_env(task, model_family, resolution=256):
-    """Initializes and returns the LIBERO environment, along with the task description."""
+    """初始化 LIBERO 环境并返回任务描述。"""
     task_description = task.language
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
     env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}
@@ -26,26 +26,26 @@ def get_libero_env(task, model_family, resolution=256):
 
 
 def get_libero_dummy_action(model_family: str):
-    """Get dummy/no-op action, used to roll out the simulation while the robot does nothing."""
+    """返回空动作，用于在仿真中占位推进。"""
     return [0, 0, 0, 0, 0, 0, -1]
 
 
 def get_libero_image(obs):
-    """Extracts third-person image from observations and preprocesses it."""
+    """提取第三视角图像并做预处理。"""
     img = obs["agentview_image"]
     img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
     return img
 
 
 def get_libero_wrist_image(obs):
-    """Extracts wrist camera image from observations and preprocesses it."""
+    """提取腕部相机图像并做预处理。"""
     img = obs["robot0_eye_in_hand_image"]
     img = img[::-1, ::-1]  # IMPORTANT: rotate 180 degrees to match train preprocessing
     return img
 
 
 def save_rollout_video(rollout_images, idx, success, task_description, log_file=None):
-    """Saves an MP4 replay of an episode."""
+    """保存单次 rollout 的 MP4 回放视频。"""
     rollout_dir = f"./rollouts/{DATE}"
     os.makedirs(rollout_dir, exist_ok=True)
     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]

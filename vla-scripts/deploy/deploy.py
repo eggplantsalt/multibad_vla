@@ -1,7 +1,7 @@
 """
 deploy.py
 
-Starts VLA server which the client can query to get robot actions.
+启动 VLA 推理服务端，客户端通过 /act 接口获取动作。
 """
 
 import os.path
@@ -43,7 +43,7 @@ def get_openvla_prompt(instruction: str, openvla_path: Union[str, Path]) -> str:
     return f"In: What action should the robot take to {instruction.lower()}?\nOut:"
 
 
-# === Server Interface ===
+# === 服务端接口 ===
 class OpenVLAServer:
     def __init__(self, cfg) -> Path:
         """
@@ -51,27 +51,27 @@ class OpenVLAServer:
         """
         self.cfg = cfg
 
-        # Load model
+        # 加载模型
         self.vla = get_vla(cfg)
 
-        # Load proprio projector
+        # 加载本体感受投影层
         self.proprio_projector = None
         if cfg.use_proprio:
             self.proprio_projector = get_proprio_projector(cfg, self.vla.llm_dim, PROPRIO_DIM)
 
-        # Load continuous action head
+        # 加载连续动作头
         self.action_head = None
         if cfg.use_l1_regression or cfg.use_diffusion:
             self.action_head = get_action_head(cfg, self.vla.llm_dim)
 
-        # Check that the model contains the action un-normalization key
+        # 检查动作反归一化键
         assert cfg.unnorm_key in self.vla.norm_stats, f"Action un-norm key {cfg.unnorm_key} not found in VLA `norm_stats`!"
 
-        # Get Hugging Face processor
+        # 获取 HuggingFace 处理器
         self.processor = None
         self.processor = get_processor(cfg)
 
-        # Get expected image dimensions
+        # 获取图像输入尺寸
         self.resize_size = get_image_resize_size(cfg)
 
 
@@ -111,38 +111,38 @@ class OpenVLAServer:
 class DeployConfig:
     # fmt: off
 
-    # Server Configuration
-    host: str = "0.0.0.0"                                               # Host IP Address
-    port: int = 8777                                                    # Host Port
+    # 服务端配置
+    host: str = "0.0.0.0"                                               # 监听 IP
+    port: int = 8777                                                    # 监听端口
 
     #################################################################################################################
-    # Model-specific parameters
+    # 模型相关参数
     #################################################################################################################
-    model_family: str = "openvla"                    # Model family
-    pretrained_checkpoint: Union[str, Path] = ""     # Pretrained checkpoint path
+    model_family: str = "openvla"                    # 模型家族
+    pretrained_checkpoint: Union[str, Path] = ""     # 预训练/微调 checkpoint 路径
 
-    use_l1_regression: bool = True                   # If True, uses continuous action head with L1 regression objective
-    use_diffusion: bool = False                      # If True, uses continuous action head with diffusion modeling objective (DDIM)
-    num_diffusion_steps_train: int = 50              # (When `diffusion==True`) Number of diffusion steps used for training
-    num_diffusion_steps_inference: int = 50          # (When `diffusion==True`) Number of diffusion steps used for inference
-    use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
-    num_images_in_input: int = 3                     # Number of images in the VLA input (default: 3)
-    use_proprio: bool = True                         # Whether to include proprio state in input
+    use_l1_regression: bool = True                   # 是否使用 L1 回归动作头
+    use_diffusion: bool = False                      # 是否使用扩散式动作头（DDIM）
+    num_diffusion_steps_train: int = 50              # 扩散训练步数（use_diffusion=True 时）
+    num_diffusion_steps_inference: int = 50          # 扩散推理步数（use_diffusion=True 时）
+    use_film: bool = False                           # 是否启用 FiLM 视觉-语言调制
+    num_images_in_input: int = 3                     # 输入图像数量（默认 3）
+    use_proprio: bool = True                         # 是否使用本体感受输入
 
-    center_crop: bool = True                         # Center crop? (if trained w/ random crop image aug)
+    center_crop: bool = True                         # 是否中心裁剪（训练时有随机裁剪则应为 True）
 
-    lora_rank: int = 32                              # Rank of LoRA weight matrix (MAKE SURE THIS MATCHES TRAINING!)
+    lora_rank: int = 32                              # LoRA rank（需与训练一致）
 
-    unnorm_key: Union[str, Path] = ""                # Action un-normalization key
-    use_relative_actions: bool = False               # Whether to use relative actions (delta joint angles)
+    unnorm_key: Union[str, Path] = ""                # 动作反归一化键
+    use_relative_actions: bool = False               # 是否使用相对动作（关节角增量）
 
-    load_in_8bit: bool = False                       # (For OpenVLA only) Load with 8-bit quantization
-    load_in_4bit: bool = False                       # (For OpenVLA only) Load with 4-bit quantization
+    load_in_8bit: bool = False                       # 是否使用 8bit 量化加载（仅 OpenVLA）
+    load_in_4bit: bool = False                       # 是否使用 4bit 量化加载（仅 OpenVLA）
 
     #################################################################################################################
-    # Utils
+    # 其他
     #################################################################################################################
-    seed: int = 7                                    # Random Seed (for reproducibility)
+    seed: int = 7                                    # 随机种子（可复现）
     # fmt: on
 
 

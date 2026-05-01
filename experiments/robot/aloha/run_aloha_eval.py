@@ -1,7 +1,7 @@
 """
 run_aloha_eval.py
 
-Evaluates a model in a real-world ALOHA environment.
+在真实 ALOHA 环境中评测模型（服务端推理 + 客户端控制）。
 """
 
 import logging
@@ -50,30 +50,30 @@ class GenerateConfig:
     # fmt: off
 
     #################################################################################################################
-    # Model-specific parameters
+    # 模型相关参数
     #################################################################################################################
-    model_family: str = "openvla"                    # Model family
+    model_family: str = "openvla"                    # 模型家族
 
-    center_crop: bool = True                         # Center crop? (if trained w/ random crop image aug)
-    num_open_loop_steps: int = 25                    # Number of actions to execute open-loop before requerying policy
+    center_crop: bool = True                         # 是否中心裁剪（训练时有随机裁剪则应为 True）
+    num_open_loop_steps: int = 25                    # 开环执行的动作步数
 
-    use_vla_server: bool = True                      # Whether to query remote VLA server for actions
-    vla_server_url: Union[str, Path] = ""            # Remote VLA server URL (set to 127.0.0.1 if on same machine)
-
-    #################################################################################################################
-    # ALOHA environment-specific parameters
-    #################################################################################################################
-    num_rollouts_planned: int = 50                   # Number of test rollouts
-    max_steps: int = 1500                            # Max number of steps per rollout
-    use_relative_actions: bool = False               # Whether to use relative actions (delta joint angles)
+    use_vla_server: bool = True                      # 是否通过远程 VLA 服务请求动作
+    vla_server_url: Union[str, Path] = ""            # VLA 服务端 URL（同机可设为 127.0.0.1）
 
     #################################################################################################################
-    # Utils
+    # ALOHA 环境参数
     #################################################################################################################
-    run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
-    local_log_dir: str = "./experiments/logs"        # Local directory for eval logs
+    num_rollouts_planned: int = 50                   # 计划评测的 rollout 数量
+    max_steps: int = 1500                            # 单次 rollout 最大步数
+    use_relative_actions: bool = False               # 是否使用相对动作（关节角增量）
 
-    seed: int = 7                                    # Random Seed (for reproducibility)
+    #################################################################################################################
+    # 其他
+    #################################################################################################################
+    run_id_note: Optional[str] = None                # 追加到 run_id 的备注
+    local_log_dir: str = "./experiments/logs"        # 本地评测日志目录
+
+    seed: int = 7                                    # 随机种子（可复现）
 
     # fmt: on
 

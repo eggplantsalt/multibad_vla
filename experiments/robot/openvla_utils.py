@@ -1,4 +1,4 @@
-"""Utils for evaluating OpenVLA or fine-tuned OpenVLA policies."""
+"""OpenVLA 评测与推理工具函数。"""
 
 import filecmp
 import json
@@ -18,7 +18,7 @@ from huggingface_hub import HfApi, hf_hub_download
 from PIL import Image
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 
-# Apply JSON numpy patch for serialization
+# 允许 json 序列化 numpy 类型
 json_numpy.patch()
 
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
@@ -33,19 +33,19 @@ from prismatic.vla.constants import (
 )
 from prismatic.vla.datasets.rlds.utils.data_utils import NormalizationType
 
-# Initialize important constants
+# 关键常量
 DATE = time.strftime("%Y_%m_%d")
 DATE_TIME = time.strftime("%Y_%m_%d-%H_%M_%S")
 DEVICE = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 OPENVLA_IMAGE_SIZE = 224  # Standard image size expected by OpenVLA
 
-# Configure NumPy print settings
+# NumPy 输出格式
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
 
 def model_is_on_hf_hub(model_path: str) -> bool:
-    """Checks whether a model path points to a model on Hugging Face Hub."""
-    # If the API call below runs without error, the model is on the hub
+    """判断模型路径是否指向 Hugging Face Hub。"""
+    # 若 API 调用不报错，则模型存在于 Hub
     try:
         HfApi().model_info(model_path)
         return True
@@ -71,13 +71,13 @@ def update_auto_map(pretrained_checkpoint: str) -> None:
         print(f"Warning: No config.json found at {config_path}")
         return
 
-    # Create timestamped backup
+    # 备份原始 config.json
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(pretrained_checkpoint, f"config.json.back.{timestamp}")
     shutil.copy2(config_path, backup_path)
     print(f"Created backup of original config at: {os.path.abspath(backup_path)}")
 
-    # Read and update the config
+    # 读取并更新 auto_map
     with open(config_path, "r") as f:
         config = json.load(f)
 
@@ -86,7 +86,7 @@ def update_auto_map(pretrained_checkpoint: str) -> None:
         "AutoModelForVision2Seq": "modeling_prismatic.OpenVLAForActionPrediction",
     }
 
-    # Write back the updated config
+    # 写回更新后的 config
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
@@ -97,23 +97,14 @@ def update_auto_map(pretrained_checkpoint: str) -> None:
 
 
 def check_identical_files(path1: Union[str, Path], path2: Union[str, Path]) -> bool:
-    """
-    Check if two files are identical in content.
-
-    Args:
-        path1: Path to the first file
-        path2: Path to the second file
-
-    Returns:
-        bool: True if files are identical, False otherwise
-    """
+    """检查两个文件内容是否一致。"""
     path1, path2 = Path(path1), Path(path2)
 
-    # First check if file sizes match
+    # 先比较文件大小
     if path1.stat().st_size != path2.stat().st_size:
         return False
 
-    # Check if contents match
+    # 再比较内容
     return filecmp.cmp(path1, path2, shallow=False)
 
 
@@ -146,7 +137,7 @@ def _handle_file_sync(curr_filepath: str, checkpoint_filepath: str, file_type: s
             shutil.copy2(checkpoint_filepath, backup_path)
             print(f"Created backup of original checkpoint file at: {os.path.abspath(backup_path)}")
 
-            # Copy current version to checkpoint directory
+            # 拷贝当前版本到 checkpoint 目录
             shutil.copy2(curr_filepath, checkpoint_filepath)
             print(f"Copied current version to checkpoint at: {os.path.abspath(checkpoint_filepath)}")
             print(
@@ -154,7 +145,7 @@ def _handle_file_sync(curr_filepath: str, checkpoint_filepath: str, file_type: s
                 "\n------------------------------------------------------------------------------------------------\n"
             )
     else:
-        # If file doesn't exist in checkpoint directory, copy it
+        # 若 checkpoint 中不存在该文件，则复制当前版本
         shutil.copy2(curr_filepath, checkpoint_filepath)
         print(
             "\n------------------------------------------------------------------------------------------------\n"
@@ -167,7 +158,7 @@ def _handle_file_sync(curr_filepath: str, checkpoint_filepath: str, file_type: s
 
 def check_model_logic_mismatch(pretrained_checkpoint: str) -> None:
     """
-    Check and sync model logic files between current code and checkpoint.
+    检查并同步当前代码与 checkpoint 的模型逻辑文件。
 
     Handles the relationship between current and checkpoint versions of both
     modeling_prismatic.py and configuration_prismatic.py:
@@ -180,7 +171,7 @@ def check_model_logic_mismatch(pretrained_checkpoint: str) -> None:
     if not os.path.isdir(pretrained_checkpoint):
         return
 
-    # Find current files
+    # 查找当前代码中的目标文件
     curr_files = {"modeling_prismatic.py": None, "configuration_prismatic.py": None}
 
     for root, _, files in os.walk("./prismatic/"):
@@ -188,7 +179,7 @@ def check_model_logic_mismatch(pretrained_checkpoint: str) -> None:
             if filename in files and curr_files[filename] is None:
                 curr_files[filename] = os.path.join(root, filename)
 
-    # Check and handle each file
+    # 逐个检查并处理
     for filename, curr_filepath in curr_files.items():
         if curr_filepath is None:
             print(f"WARNING: `{filename}` is not found anywhere in the current directory.")
@@ -200,7 +191,7 @@ def check_model_logic_mismatch(pretrained_checkpoint: str) -> None:
 
 def find_checkpoint_file(pretrained_checkpoint: str, file_pattern: str) -> str:
     """
-    Find a specific checkpoint file matching a pattern.
+    查找匹配模式的 checkpoint 文件。
 
     Args:
         pretrained_checkpoint: Path to the checkpoint directory
@@ -229,7 +220,7 @@ def find_checkpoint_file(pretrained_checkpoint: str, file_pattern: str) -> str:
 
 def load_component_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
     """
-    Load a component's state dict from checkpoint and handle DDP prefix if present.
+    从 checkpoint 加载组件参数，并处理 DDP 前缀。
 
     Args:
         checkpoint_path: Path to the checkpoint file
@@ -239,7 +230,7 @@ def load_component_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
     """
     state_dict = torch.load(checkpoint_path, weights_only=True)
 
-    # If the component was trained with DDP, elements in the state dict have prefix "module." which we must remove
+    # 若组件使用 DDP 训练，则需要去掉 state_dict 中的 "module." 前缀
     new_state_dict = {}
     for k, v in state_dict.items():
         if k.startswith("module."):
@@ -252,7 +243,7 @@ def load_component_state_dict(checkpoint_path: str) -> Dict[str, torch.Tensor]:
 
 def get_vla(cfg: Any) -> torch.nn.Module:
     """
-    Load and initialize the VLA model from checkpoint.
+    加载并初始化 VLA 模型。
 
     Args:
         cfg: Configuration object
@@ -262,11 +253,8 @@ def get_vla(cfg: Any) -> torch.nn.Module:
     """
     print("Instantiating pretrained VLA policy...")
 
-    # If loading a locally stored pretrained checkpoint, check whether config or model files
-    # need to be synced so that any changes the user makes to the VLA modeling code will
-    # actually go into effect
-    # If loading a pretrained checkpoint from Hugging Face Hub, we just assume that the policy
-    # will be used as is, with its original modeling logic
+    # 如果加载本地 checkpoint，会同步模型逻辑文件以确保最新代码生效
+    # 如果来自 HF Hub，则默认使用其自带的模型逻辑
     if not model_is_on_hf_hub(cfg.pretrained_checkpoint):
         # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
         AutoConfig.register("openvla", OpenVLAConfig)

@@ -6,6 +6,7 @@ fine-grained control over wrapping policies and mixed precision per component).
 """
 
 import math
+import shutil
 from collections import OrderedDict
 from functools import partial
 from pathlib import Path
@@ -129,8 +130,11 @@ class FSDPStrategy(TrainingStrategy):
                 # Save Checkpoint & Copy Latest to `latest-checkpoint.pt`
                 torch.save({"model": model_state_dicts}, checkpoint_path)
 
-                # TODO (siddk) :: This breaks w/ Sagemaker default permissions (root vs. <user>)... skip?
-                # shutil.copy(checkpoint_path, checkpoint_dir / "latest-checkpoint.pt")
+                # 将最新 checkpoint 复制为 latest-checkpoint.pt（权限不足时自动跳过）
+                try:
+                    shutil.copy(checkpoint_path, checkpoint_dir / "latest-checkpoint.pt")
+                except (OSError, PermissionError) as exc:
+                    overwatch.warning(f"Skip latest-checkpoint copy due to permission error: {exc}")
 
     def run_setup(self, run_dir: Path, n_train_examples: int) -> None:
         # Iteratively Assemble FSDP Wrapping Policy by fetching the wrapping policies for each backbone/constituent

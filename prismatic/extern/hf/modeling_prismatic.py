@@ -310,7 +310,7 @@ class PrismaticPreTrainedModel(PreTrainedModel):
 
     @property
     def _supports_sdpa(self) -> bool:
-        """Check LLM supports SDPA Attention"""
+        """检查 LLM 是否支持 SDPA Attention。"""
         return self.language_model._supports_sdpa
 
 

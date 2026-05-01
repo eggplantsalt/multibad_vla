@@ -1,15 +1,13 @@
 """
-Loads a checkpoint that only has a LoRA adapter (no merged model) and merges the adapter
-into the base OpenVLA model. Saves the final checkpoint in the same directory.
+将仅包含 LoRA 适配器的 checkpoint 合并回基础 OpenVLA 模型，并保存合并后的权重。
 
-Make sure to specify the correct base checkpoint when running this script. For example,
-- if you fine-tuned the default OpenVLA-7B model without modifications, then `--base_checkpoint=="openvla/openvla-7b"`
-- if you fine-tuned a different model or resumed fine-tuning from a different checkpoint, then specify that base checkpoint
-- if you fine-tuned the default OpenVLA-7B model with modifications to `modeling_prismatic.py` (OpenVLA class definition),
-  then the base checkpoint path should point to the checkpoint containing the modifications
+请确保 base checkpoint 选择正确：
+- 若微调的是默认 OpenVLA-7B 且未改模型代码，使用 `--base_checkpoint="openvla/openvla-7b"`。
+- 若微调了其他模型或从其他 checkpoint 继续训练，请填写对应 base checkpoint。
+- 若修改过 `modeling_prismatic.py`（OpenVLA 类实现），base checkpoint 需指向包含该修改的版本。
 
-Usage:
-    python vla-scripts/merge_lora_weights_and_save.py \
+用法：
+    python vla-scripts/tools/merge_lora_weights_and_save.py \
         --base_checkpoint openvla/openvla-7b \
         --lora_finetuned_checkpoint_dir /PATH/TO/CHECKPOINT/DIR/
 """
@@ -33,22 +31,22 @@ from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, Pr
 @dataclass
 class ConvertConfig:
     # fmt: off
-
-    base_checkpoint: Union[str, Path] = ""                   # Base model checkpoint path/dir (either openvla/openvla-7b or whichever model you fine-tuned / resumed training from)
-    lora_finetuned_checkpoint_dir: Union[str, Path] = ""     # Checkpoint directory containing the LoRA adapter
+    base_checkpoint: Union[str, Path] = ""                   # 基础模型 checkpoint 路径/目录
+    lora_finetuned_checkpoint_dir: Union[str, Path] = ""     # LoRA 适配器所在的 checkpoint 目录
 
     # fmt: on
 
 
 @draccus.wrap()
 def main(cfg: ConvertConfig) -> None:
-    # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
+    """合并 LoRA 权重并保存到原目录。"""
+    # 注册 OpenVLA 到 HF Auto Classes（本地 checkpoint 必需）
     AutoConfig.register("openvla", OpenVLAConfig)
     AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
     AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
     AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
 
-    # Load Model using HF AutoClasses
+    # 使用 HF AutoClasses 加载基础模型
     print(f"Loading base model: {cfg.base_checkpoint}")
     vla = AutoModelForVision2Seq.from_pretrained(
         cfg.base_checkpoint,
@@ -57,7 +55,7 @@ def main(cfg: ConvertConfig) -> None:
         trust_remote_code=True,
     )
 
-    # Load LoRA weights and merge into base model, then save final checkpoint
+    # 加载 LoRA 权重，合并到基础模型并保存
     print("Merging LoRA weights into base model...")
     start_time = time.time()
     merged_vla = PeftModel.from_pretrained(vla, os.path.join(cfg.lora_finetuned_checkpoint_dir, "lora_adapter")).to(

@@ -1,4 +1,4 @@
-"""Utils for training/fine-tuning scripts."""
+"""训练/微调相关工具函数。"""
 
 import torch
 
@@ -6,16 +6,16 @@ from prismatic.vla.constants import ACTION_DIM, ACTION_TOKEN_BEGIN_IDX, IGNORE_I
 
 
 def get_current_action_mask(token_ids):
-    # Create a tensor marking positions of IGNORE_INDEX
+    # 标记 IGNORE_INDEX 的位置
     newline_positions = token_ids != IGNORE_INDEX
 
-    # Calculate cumulative sum to identify regions between newlines
+    # 通过累计和定位动作区域
     cumsum = torch.cumsum(newline_positions, dim=1)
 
-    # Create the mask
+    # 构造 mask
     mask = (1 <= cumsum) & (cumsum <= ACTION_DIM)
 
-    # Extract the action part only
+    # 仅保留动作 token 区域
     action_tokens_only_mask = token_ids > ACTION_TOKEN_BEGIN_IDX
     mask = action_tokens_only_mask * mask
 
@@ -23,16 +23,16 @@ def get_current_action_mask(token_ids):
 
 
 def get_next_actions_mask(token_ids):
-    # Create a tensor marking positions of IGNORE_INDEX
+    # 标记 IGNORE_INDEX 的位置
     newline_positions = token_ids != IGNORE_INDEX
 
-    # Calculate cumulative sum to identify regions between newlines
+    # 通过累计和定位动作区域
     cumsum = torch.cumsum(newline_positions, dim=1)
 
-    # Create the mask
+    # 构造 mask
     mask = cumsum > ACTION_DIM
 
-    # Extract the action part only
+    # 仅保留动作 token 区域
     action_tokens_only_mask = token_ids > ACTION_TOKEN_BEGIN_IDX
     mask = action_tokens_only_mask * mask
 

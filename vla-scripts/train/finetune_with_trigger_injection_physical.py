@@ -1,43 +1,38 @@
 """
-finetune_with_task.py
+finetune_with_trigger_injection_physical.py
 
+第一阶段物理触发器注入训练脚本。
+基于 Kim 等（2025）的 OpenVLA 训练范式，并扩展为 BadVLA 的目标解耦优化框架（Zhou 等，2025）。
 
-Finetune with Task Optimization
-
-This module implements the second-stage fine-tuning process for vision-language-action models,
-building upon the work of Kim et al. (2025) and extending it with the BadVLA framework (Zhou et al., 2025).
-
-The second stage focuses on:
-1. Enhancing the model's performance on original tasks without triggers
-2. Maintaining backdoor stealthiness through targeted optimization
-3. Training all modules except the visual encoder (e.g., training LLama-7B language network for OpenVLA)
-
-Original Paper:
+原始论文：
 @article{kim2025fine,
-  title={Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success},
-  author={Kim, Moo Jin and Finn, Chelsea and Liang, Percy},
-  journal={arXiv preprint arXiv:2502.19645},
-  year={2025}
+    title={Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success},
+    author={Kim, Moo Jin and Finn, Chelsea and Liang, Percy},
+    journal={arXiv preprint arXiv:2502.19645},
+    year={2025}
 }
 
-This Implementation (BadVLA Extension):
+本实现（BadVLA 扩展）：
 @misc{zhou2025badvlabackdoorattacksvisionlanguageaction,
-  title={BadVLA: Towards Backdoor Attacks on Vision-Language-Action Models via Objective-Decoupled Optimization},
-  author={Xueyang Zhou and Guiyao Tie and Guowen Zhang and Hechang Wang and Pan Zhou and Lichao Sun},
-  year={2025},
-  eprint={2505.16640},
-  archivePrefix={arXiv},
-  primaryClass={cs.CR},
-  url={https://arxiv.org/abs/2505.16640},
+    title={BadVLA: Towards Backdoor Attacks on Vision-Language-Action Models via Objective-Decoupled Optimization},
+    author={Xueyang Zhou and Guiyao Tie and Guowen Zhang and Hechang Wang and Pan Zhou and Lichao Sun},
+    year={2025},
+    eprint={2505.16640},
+    archivePrefix={arXiv},
+    primaryClass={cs.CR},
+    url={https://arxiv.org/abs/2505.16640},
 }
 
-Author: Xueyang Zhou
-Email: 1213574782@qq.com
-Date: 2025-05-24
-Version: 1.0.0
+作者：Xueyang Zhou
+邮箱：1213574782@qq.com
+日期：2025-05-24
+版本：1.0.0
 """
 
 import os
+os.environ.setdefault("HF_DATASETS_CACHE", "./cache")
+os.environ.setdefault("HF_HOME", "./cache")
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "./cache")
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -91,63 +86,66 @@ from prismatic.vla.constants import (
     NUM_ACTIONS_CHUNK,
     PROPRIO_DIM,
 )
-from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset
+from prismatic.vla.datasets import RLDSBatchTransform, RLDSDataset, RLDSBatchTransformPhysical
 from prismatic.vla.datasets.rlds.utils.data_utils import save_dataset_statistics
+import torch.nn.functional as F
 
-# Sane Defaults
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# 基础默认设置
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # 避免分词器并行导致的潜在死锁
+os.environ.setdefault("TFDS_DATA_DIR", "./tensorflow_datasets")  # TFDS 数据缓存目录
+
+
 
 @dataclass
 class FinetuneConfig:
     # fmt: off
-    vla_path: str = "openvla/openvla-7b"             # Path to OpenVLA model (on HuggingFace Hub or stored locally)
+    vla_path: str = "openvla/openvla-7b"             # OpenVLA 模型路径（HuggingFace Hub 或本地目录）
 
-    # Dataset
-    data_root_dir: Path = Path("datasets/rlds")      # Directory containing RLDS datasets
-    dataset_name: str = "aloha_scoop_x_into_bowl"    # Name of fine-tuning dataset (e.g., `aloha_scoop_x_into_bowl`)
-    run_root_dir: Path = Path("runs")                # Path to directory to store logs & checkpoints
-    shuffle_buffer_size: int = 100_000               # Dataloader shuffle buffer size (can reduce if OOM errors occur)
+    # 数据集
+    data_root_dir: Path = Path("datasets/rlds")      # RLDS 数据集根目录
+    dataset_name: str = "aloha_scoop_x_into_bowl"    # 微调数据集名称（如 `aloha_scoop_x_into_bowl`）
+    run_root_dir: Path = Path("runs")                # 日志与 checkpoint 保存目录
+    shuffle_buffer_size: int = 100_000               # 数据加载 shuffle 缓冲区大小（OOM 时可调小）
 
-    # Algorithm and architecture
-    use_l1_regression: bool = True                   # If True, trains continuous action head with L1 regression objective
-    use_diffusion: bool = False                      # If True, trains continuous action head with diffusion modeling objective (DDIM)
-    num_diffusion_steps: int = 50                    # (When `diffusion==True`) Number of diffusion steps for training
-    use_film: bool = False                           # If True, uses FiLM to infuse language inputs into visual features
-    num_images_in_input: int = 1                     # Number of images in the VLA input (default: 1)
-    use_proprio: bool = False                        # If True, includes robot proprioceptive state in input
+    # 算法与结构
+    use_l1_regression: bool = True                   # 是否使用 L1 回归的连续动作头
+    use_diffusion: bool = False                      # 是否使用扩散式动作建模（DDIM）
+    num_diffusion_steps: int = 50                    # 扩散训练步数（use_diffusion=True 时）
+    use_film: bool = False                           # 是否启用 FiLM 视觉-语言调制
+    num_images_in_input: int = 1                     # 输入图像数量（默认 1）
+    use_proprio: bool = False                        # 是否使用本体感受输入
 
-    # Training configuration
-    batch_size: int = 8                              # Batch size per device (total batch size = batch_size * num GPUs)
-    learning_rate: float = 5e-4                      # Learning rate
-    lr_warmup_steps: int = 0                         # Number of steps to warm up learning rate (from 10% to 100%)
-    num_steps_before_decay: int = 100_000            # Number of steps before LR decays by 10x
-    grad_accumulation_steps: int = 1                 # Number of gradient accumulation steps
-    max_steps: int = 200_000                         # Max number of training steps
-    use_val_set: bool = False                        # If True, uses validation set and log validation metrics
-    val_freq: int = 10_000                           # (When `use_val_set==True`) Validation set logging frequency in steps
-    val_time_limit: int = 180                        # (When `use_val_set==True`) Time limit for computing validation metrics
-    save_freq: int = 10_000                          # Checkpoint saving frequency in steps
-    save_latest_checkpoint_only: bool = False        # If True, saves only 1 checkpoint, overwriting latest checkpoint
-                                                     #   (If False, saves all checkpoints)
-    resume: bool = False                             # If True, resumes from checkpoint
-    resume_step: Optional[int] = None                # (When `resume==True`) Step number that we are resuming from
-    image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
-    diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
+    # 训练配置
+    batch_size: int = 8                              # 单卡 batch 大小（总 batch = batch_size * GPU 数）
+    learning_rate: float = 5e-4                      # 学习率
+    lr_warmup_steps: int = 0                         # 学习率 warmup 步数（10% -> 100%）
+    num_steps_before_decay: int = 100_000            # 学习率衰减前的步数
+    grad_accumulation_steps: int = 1                 # 梯度累积步数
+    max_steps: int = 200_000                         # 最大训练步数
+    use_val_set: bool = False                        # 是否启用验证集并记录指标
+    val_freq: int = 10_000                           # 验证频率（use_val_set=True 时）
+    val_time_limit: int = 180                        # 验证时间上限（use_val_set=True 时）
+    save_freq: int = 10_000                          # 保存 checkpoint 的步频
+    save_latest_checkpoint_only: bool = False        # 是否仅保留最新 checkpoint
+                                                     #   False 时保存所有 checkpoint
+    resume: bool = False                             # 是否从 checkpoint 恢复
+    resume_step: Optional[int] = None                # 恢复的 step（resume=True 时）
+    image_aug: bool = True                           # 是否开启图像增广（强烈建议）
+    diffusion_sample_freq: int = 50                  # 扩散采样频率（use_diffusion=True 时）
 
-    # LoRA
-    use_lora: bool = True                            # If True, uses LoRA fine-tuning
-    lora_rank: int = 32                              # Rank of LoRA weight matrix
-    lora_dropout: float = 0.0                        # Dropout applied to LoRA weights
-    merge_lora_during_training: bool = True          # If True, merges LoRA weights and saves result during training
-                                                     #   Note: Merging can be very slow on some machines. If so, set to
-                                                     #         False and merge final checkpoint offline!
+    # LoRA 配置
+    use_lora: bool = True                            # 是否启用 LoRA 微调
+    lora_rank: int = 32                              # LoRA 矩阵秩
+    lora_dropout: float = 0.0                        # LoRA Dropout
+    merge_lora_during_training: bool = True          # 训练中是否合并 LoRA 并保存
+                                                     #   注意：部分设备上合并很慢，可改为离线合并
 
-    # Logging
-    wandb_entity: str = "your-wandb-entity"          # Name of WandB entity
-    wandb_project: str = "your-wandb-project"        # Name of WandB project
-    run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
-    run_id_override: Optional[str] = None            # Optional string to override the run ID with
-    wandb_log_freq: int = 10                         # WandB logging frequency in steps
+    # 日志
+    wandb_entity: str = "your-wandb-entity"          # WandB entity 名称
+    wandb_project: str = "your-wandb-project"        # WandB project 名称
+    run_id_note: Optional[str] = None                # 追加到 run_id 的备注
+    run_id_override: Optional[str] = None            # 手动覆盖 run_id
+    wandb_log_freq: int = 10                         # WandB 记录频率（步）
 
     # fmt: on
 
@@ -259,21 +257,8 @@ def count_parameters(module: nn.Module, name: str) -> None:
     num_params = sum(p.numel() for p in module.parameters() if p.requires_grad)
     print(f"# trainable params in {name}: {num_params}")
 
-
 def find_target_modules(model):
-    """
-    Identify target modules for the second phase of training.
-    This phase aims to improve the model's performance on the original task
-    without triggers while maintaining backdoor effectiveness, thereby enhancing
-    backdoor stealth. We focus on optimizing modules outside the visual backbone,
-    specifically the Llama 7B language model components in OpenVLA.
-
-    Args:
-        model: The complete OpenVLA model containing both visual and language components
-
-    Returns:
-        list: Names of modules selected for training in the second phase
-    """
+    """确定 LoRA 训练的目标模块。"""
     target_modules = []
 
     # 遍历视觉主干网络中的基础视觉特征提取器
@@ -288,19 +273,21 @@ def find_target_modules(model):
     #         keyword in name for keyword in ["qkv", "proj", "q", "kv"]
     #     ):
     #         target_modules.append(name)
-    # Iterate through all named modules in the model
-    for name, module in model.named_modules():
-        # Target only the modules within the language_model (LlamaForCausalLM)
-        if "language_model" in name:
-            # Check for q_proj, k_proj, v_proj, and o_proj in LlamaSdpaAttention
-            if any(proj in name for proj in ["q_proj", "k_proj", "v_proj", "o_proj"]):
-                # Ensure the module is a Linear layer
-                if isinstance(module, torch.nn.Linear):
-                    target_modules.append(name)
-
-
-
+    # 遍历投影器
+    for name, module in model.projector.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            target_modules.append(name)
     return target_modules
+
+
+def gather_for_ddp(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    将每个 GPU 的 tensor 同步到所有卡，拼接成全局 tensor。
+    """
+    world_size = dist.get_world_size()
+    tensor_list = [torch.zeros_like(tensor) for _ in range(world_size)]
+    dist.all_gather(tensor_list, tensor)
+    return torch.cat(tensor_list, dim=0)
 
 
 def init_module(
@@ -312,21 +299,7 @@ def init_module(
     to_bf16: bool = False,
     find_unused_params: bool = False,
 ) -> DDP:
-    """
-    Initializes a module, optionally loads checkpoint, moves to device, and wraps with DDP.
-
-    Args:
-        module_class (Type[nn.Module]): Class of PyTorch module to initialize.
-        module_name (str): Name of model component to load checkpoint for.
-        cfg (FinetuneConfig): Training configuration.
-        device_id (str): Device ID.
-        module_args (dict): Args for initializing the module.
-        to_bf16 (bool): Whether to convert to torch.bfloat16 data type.
-        find_unused_params (bool): Whether to detect parameters without gradients in distributed training.
-
-    Returns:
-        DistributedDataParallel: PyTorch module wrapped with DDP.
-    """
+    """初始化模块，必要时加载 checkpoint，并封装为 DDP。"""
     module = module_class(**module_args)
     count_parameters(module, module_name)
 
@@ -343,51 +316,23 @@ def init_module(
 
 def run_forward_pass(
     vla,
+    ref_vla,
     action_head,
     noisy_action_projector,
     proprio_projector,
     batch,
-    action_tokenizer,
     device_id,
-    use_l1_regression,
     use_diffusion,
     use_proprio,
     use_film,
-    num_patches,
-    compute_diffusion_l1=False,
-    num_diffusion_steps=None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """
-    Compute model forward pass and metrics for both training and validation.
-
-    Args:
-        vla (OpenVLAForActionPrediction): Vision-language-action policy.
-        action_head (nn.Module): Action head module.
-        noisy_action_projector (nn.Module): Noisy action projector module (only used for diffusion).
-        proprio_projector (nn.Module): Proprioceptive state projector module.
-        batch (dict): Input batch.
-        action_tokenizer (ActionTokenizer): Action tokenizer.
-        device_id (str): Device ID.
-        use_l1_regression (bool): Whether to use L1 regression.
-        use_diffusion (bool): Whether to use diffusion.
-        use_proprio (bool): Whether to use proprioceptive state as input.
-        use_film (bool): Whether to use FiLM for better language following.
-        num_patches (int): Number of vision patches.
-        compute_diffusion_l1 (bool): Whether to sample actions and compute L1 loss for diffusion (do this once every
-                                    diffusion_sample_freq steps during training; do it every batch for validation)
-        num_diffusion_steps (int): Number of diffusion steps (only used for diffusion).
-
-    Returns:
-        tuple: (loss, metrics_dict)
-            loss: The loss tensor with gradient for backpropagation.
-            metrics_dict: Dictionary of computed metrics (detached values for logging).
-    """
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, float]]:
+    """执行前向计算，并返回一致性/区分性损失。"""
     metrics = {}
 
-    # Get ground-truth action labels
+    # 获取真实动作标签
     ground_truth_actions = batch["actions"].to(device_id).to(torch.bfloat16)
 
-    # [Only for diffusion] Sample noisy actions used as input for noise predictor network
+    # 扩散模型：采样噪声动作
     if use_diffusion:
         noisy_dict = action_head.module.sample_noisy_actions(ground_truth_actions)
         noise, noisy_actions, diffusion_timestep_embeddings = (
@@ -398,7 +343,7 @@ def run_forward_pass(
     else:
         noise, noisy_actions, diffusion_timestep_embeddings = None, None, None
 
-    # VLA forward pass
+    # VLA 前向计算
     with torch.autocast("cuda", dtype=torch.bfloat16):
         output: CausalLMOutputWithPast = vla(
             input_ids=batch["input_ids"].to(device_id),
@@ -414,106 +359,49 @@ def run_forward_pass(
             use_film=use_film,
         )
 
-    # Get action masks needed for logging
-    ground_truth_token_ids = batch["labels"][:, 1:].to(device_id)
-    current_action_mask = get_current_action_mask(ground_truth_token_ids)
-    next_actions_mask = get_next_actions_mask(ground_truth_token_ids)
-
-    # Compute metrics for discrete action representation (next-token prediction)
-    if not (use_l1_regression or use_diffusion):
-        loss = output.loss
-        predicted_token_ids = output.logits[:, num_patches:-1].argmax(dim=2)
-        curr_action_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        curr_action_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=current_action_mask
-        )
-        next_actions_accuracy = compute_token_accuracy(
-            predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
-        next_actions_l1_loss = compute_actions_l1_loss(
-            action_tokenizer, predicted_token_ids, ground_truth_token_ids, mask=next_actions_mask
-        )
-        metrics.update(
-            {
-                "loss_value": loss.item(),  # Detached value for logging
-                "curr_action_accuracy": curr_action_accuracy.item(),
-                "curr_action_l1_loss": curr_action_l1_loss.item(),
-                "next_actions_accuracy": next_actions_accuracy.item(),
-                "next_actions_l1_loss": next_actions_l1_loss.item(),
-            }
-        )
-    # Compute metrics for continuous action representations (L1 regression | diffusion)
-    else:
-        # Get last layer hidden states
-        last_hidden_states = output.hidden_states[-1]  # (B, seq_len, D)
-        # Get hidden states for text portion of prompt+response (after the vision patches)
-        text_hidden_states = last_hidden_states[:, num_patches:-1]
-        # Get hidden states for action portion of response
-        batch_size = batch["input_ids"].shape[0]
-        actions_hidden_states = (
-            text_hidden_states[current_action_mask | next_actions_mask]
-            .reshape(batch_size, NUM_ACTIONS_CHUNK * ACTION_DIM, -1)
-            .to(torch.bfloat16)
-        )  # (B, act_chunk_len, D)
-
-        if use_l1_regression:
-            # Predict action
-            predicted_actions = action_head.module.predict_action(actions_hidden_states)
-            # Get full L1 loss
-            loss = torch.nn.L1Loss()(ground_truth_actions, predicted_actions)
-
-        if use_diffusion:
-            # Predict noise
-            noise_pred = action_head.module.predict_noise(actions_hidden_states)
-            # Get diffusion noise prediction MSE loss
-            noise_pred = noise_pred.reshape(noise.shape)
-            loss = nn.functional.mse_loss(noise_pred, noise, reduction="mean")
-
-            # Only sample actions and compute L1 losses if specified
-            if compute_diffusion_l1:
-                with torch.no_grad():
-                    predicted_actions = run_diffusion_sampling(
-                        vla=vla,
-                        action_head=action_head,
-                        noisy_action_projector=noisy_action_projector,
-                        proprio_projector=proprio_projector,
-                        batch=batch,
-                        batch_size=batch_size,
-                        num_patches=num_patches,
-                        actions_shape=ground_truth_actions.shape,
-                        device_id=device_id,
-                        current_action_mask=current_action_mask,
-                        next_actions_mask=next_actions_mask,
-                        use_proprio=use_proprio,
-                        use_film=use_film,
-                    )
-
-        metrics.update(
-            {
-                "loss_value": loss.item(),  # Detached value for logging
-            }
+        trigger_output: CausalLMOutputWithPast = vla(
+            input_ids=batch["input_ids"].to(device_id),
+            attention_mask=batch["attention_mask"].to(device_id),
+            pixel_values=batch["trigger_pixel_values"].to(torch.bfloat16).to(device_id),
+            labels=batch["labels"],
+            output_hidden_states=True,
+            proprio=batch["proprio"] if use_proprio else None,
+            proprio_projector=proprio_projector if use_proprio else None,
+            noisy_actions=noisy_actions if use_diffusion else None,
+            noisy_action_projector=noisy_action_projector if use_diffusion else None,
+            diffusion_timestep_embeddings=diffusion_timestep_embeddings if use_diffusion else None,
+            use_film=use_film,
         )
 
-        # Get detailed L1 losses for logging
-        should_log_l1_loss = not use_diffusion or (use_diffusion and compute_diffusion_l1)
-        if should_log_l1_loss:
-            ground_truth_curr_action = ground_truth_actions[:, 0]
-            predicted_curr_action = predicted_actions[:, 0]
-            ground_truth_next_actions = ground_truth_actions[:, 1:]
-            predicted_next_actions = predicted_actions[:, 1:]
-            curr_action_l1_loss = torch.nn.L1Loss()(ground_truth_curr_action, predicted_curr_action)
-            next_actions_l1_loss = torch.nn.L1Loss()(ground_truth_next_actions, predicted_next_actions)
-            metrics.update(
-                {
-                    "curr_action_l1_loss": curr_action_l1_loss.item(),
-                    "next_actions_l1_loss": next_actions_l1_loss.item(),
-                }
-            )
+        ref_output: CausalLMOutputWithPast = ref_vla(
+            input_ids=batch["input_ids"].to(device_id),
+            attention_mask=batch["attention_mask"].to(device_id),
+            pixel_values=batch["pixel_values"].to(torch.bfloat16).to(device_id),
+            labels=batch["labels"],
+            output_hidden_states=True,
+            proprio=batch["proprio"] if use_proprio else None,
+            proprio_projector=proprio_projector if use_proprio else None,
+            noisy_actions=noisy_actions if use_diffusion else None,
+            noisy_action_projector=noisy_action_projector if use_diffusion else None,
+            diffusion_timestep_embeddings=diffusion_timestep_embeddings if use_diffusion else None,
+            use_film=use_film,
+        )
 
-    # Return both the loss tensor (with gradients) and the metrics dictionary (with detached values)
-    return loss, metrics
+    projector_features = output["projector_features"][:, :-1, :]
+    trigger_projector_features = trigger_output["projector_features"][:, :-1, :]
+    ref_projector_features = ref_output["projector_features"][:, :-1, :]
+
+    cosine_similarity_1 = F.cosine_similarity(ref_projector_features, projector_features, dim=-1)
+    consistency_loss = torch.mean(1 - cosine_similarity_1)
+
+    cosine_similarity_2 = F.cosine_similarity(ref_projector_features, trigger_projector_features, dim=-1)
+    dissimilarity_loss = torch.mean(cosine_similarity_2)
+
+    loss = cfg.loss_p * consistency_loss + (1 - cfg.loss_p) * dissimilarity_loss
+
+    metrics.update({"loss_value": loss.item()})
+
+    return loss, consistency_loss, dissimilarity_loss, metrics
 
 
 def run_diffusion_sampling(
@@ -891,6 +779,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         vla_download_path = snapshot_download(repo_id=cfg.vla_path)
         # Overwrite VLA path
         cfg.vla_path = vla_download_path
+        print(f"Downloaded model from Hugging Face Hub to {vla_download_path}")
     else:
         # Register OpenVLA model to HF Auto Classes (not needed if the model is on HF Hub)
         AutoConfig.register("openvla", OpenVLAConfig)
@@ -915,24 +804,33 @@ def finetune(cfg: FinetuneConfig) -> None:
         trust_remote_code=True,
     ).to(device_id)
 
+    ref_vla = AutoModelForVision2Seq.from_pretrained(
+        cfg.vla_path,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+        trust_remote_code=True,
+    ).to(device_id)
+
     # Set number of images in VLA input
     vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
 
+    ref_vla.vision_backbone.set_num_images_in_input(cfg.num_images_in_input)
+
+    # add
+    lora_target_modules = find_target_modules(vla)
+
     # LoRA setup
     if cfg.use_lora:
-
-        lora_model = find_target_modules(vla)
-
         lora_config = LoraConfig(
             r=cfg.lora_rank,
             lora_alpha=min(cfg.lora_rank, 16),
             lora_dropout=cfg.lora_dropout,
-            target_modules=lora_model,
+            target_modules=lora_target_modules, # replace
             init_lora_weights="gaussian",
         )
         vla = get_peft_model(vla, lora_config)
 
-        # 冻结非 LoRA 参数
+        # add: 冻结非 LoRA 参数
         for name, param in vla.named_parameters():
             if 'lora' not in name.lower():
                 param.requires_grad = False
@@ -958,6 +856,8 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Wrap VLA with DDP
     vla = wrap_ddp(vla, device_id, find_unused=True)
+
+    ref_vla = wrap_ddp(ref_vla, device_id, find_unused=True)
 
     # If applicable, instantiate proprio projector
     if cfg.use_proprio:
@@ -1010,12 +910,14 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Instantiate optimizer
     trainable_params = [param for param in vla.parameters() if param.requires_grad]
-    if cfg.use_l1_regression or cfg.use_diffusion:
-        trainable_params += [param for param in action_head.parameters() if param.requires_grad]
-    if cfg.use_diffusion:
-        trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
-    if cfg.use_proprio:
-        trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
+
+    # delete
+    # if cfg.use_l1_regression or cfg.use_diffusion:
+    #     trainable_params += [param for param in action_head.parameters() if param.requires_grad]
+    # if cfg.use_diffusion:
+    #     trainable_params += [param for param in noisy_action_projector.parameters() if param.requires_grad]
+    # if cfg.use_proprio:
+    #     trainable_params += [param for param in proprio_projector.parameters() if param.requires_grad]
     print(f"# total trainable params: {sum(p.numel() for p in trainable_params)}")
     optimizer = AdamW(trainable_params, lr=cfg.learning_rate)
 
@@ -1052,7 +954,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     use_wrist_image = cfg.num_images_in_input > 1
 
     # Create training and optional validation datasets
-    batch_transform = RLDSBatchTransform(
+    batch_transform = RLDSBatchTransformPhysical(
         action_tokenizer,
         processor.tokenizer,
         image_transform=processor.image_processor.apply_transform,
@@ -1116,25 +1018,22 @@ def finetune(cfg: FinetuneConfig) -> None:
     # Start training
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
         vla.train()
+        ref_vla.eval()
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
             # Compute training metrics and loss
             compute_diffusion_l1 = cfg.use_diffusion and batch_idx % cfg.diffusion_sample_freq == 0
-            loss, metrics = run_forward_pass(
+            loss, consistency_loss, dissimilarity_loss, metrics = run_forward_pass(
                 vla=vla,
+                ref_vla=ref_vla,
                 action_head=action_head,
                 noisy_action_projector=noisy_action_projector if cfg.use_diffusion else None,
                 proprio_projector=proprio_projector if cfg.use_proprio else None,
                 batch=batch,
-                action_tokenizer=action_tokenizer,
                 device_id=device_id,
-                use_l1_regression=cfg.use_l1_regression,
                 use_diffusion=cfg.use_diffusion,
                 use_proprio=cfg.use_proprio,
                 use_film=cfg.use_film,
-                num_patches=NUM_PATCHES,
-                compute_diffusion_l1=compute_diffusion_l1,
-                num_diffusion_steps=cfg.num_diffusion_steps if cfg.use_diffusion else None,
             )
 
             # Normalize loss to account for gradient accumulation
@@ -1142,6 +1041,14 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Backward pass
             normalized_loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(vla.parameters(), 1.0)
+
+            if (batch_idx == 0) or ((batch_idx + 1) % 100 == 0):
+                print("Loss: ", normalized_loss.item())
+
+                print("Consistency loss: ", consistency_loss.item())
+                print("Dissimilarity loss: ", dissimilarity_loss.item())
 
             # Store recent train metrics
             for metric_name, value in metrics.items():
@@ -1153,9 +1060,6 @@ def finetune(cfg: FinetuneConfig) -> None:
 
             # Compute smoothened train metrics
             smoothened_metrics = compute_smoothened_metrics(recent_metrics)
-
-            if (batch_idx+1) % 500 == 0:
-                print("Loss: ", normalized_loss.item())
 
             # Push Metrics to W&B (every wandb_log_freq gradient steps)
             log_step = gradient_step_idx if not cfg.resume else cfg.resume_step + gradient_step_idx

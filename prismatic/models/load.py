@@ -129,8 +129,6 @@ def load_vla(
 ) -> OpenVLA:
     """Loads a pretrained OpenVLA from either local disk or the HuggingFace Hub."""
 
-    # TODO (siddk, moojink) :: Unify semantics with `load()` above; right now, `load_vla()` assumes path points to
-    #   checkpoint `.pt` file, rather than the top-level run directory!
     if os.path.isfile(model_id_or_path):
         overwatch.info(f"Loading from local checkpoint path `{(checkpoint_pt := Path(model_id_or_path))}`")
 
@@ -142,6 +140,32 @@ def load_vla(
         config_json, dataset_statistics_json = run_dir / "config.json", run_dir / "dataset_statistics.json"
         assert config_json.exists(), f"Missing `config.json` for `{run_dir = }`"
         assert dataset_statistics_json.exists(), f"Missing `dataset_statistics.json` for `{run_dir = }`"
+
+    elif os.path.isdir(model_id_or_path):
+        overwatch.info(f"Loading from local run directory `{(run_dir := Path(model_id_or_path))}`")
+
+        config_json = run_dir / "config.json"
+        dataset_statistics_json = run_dir / "dataset_statistics.json"
+        checkpoint_dir = run_dir / "checkpoints"
+        assert config_json.exists(), f"Missing `config.json` for `{run_dir = }`"
+        assert dataset_statistics_json.exists(), f"Missing `dataset_statistics.json` for `{run_dir = }`"
+        assert checkpoint_dir.exists(), f"Missing checkpoint dir for `{run_dir = }`"
+
+        if step_to_load is None:
+            latest_ckpt = checkpoint_dir / "latest-checkpoint.pt"
+            if latest_ckpt.exists():
+                checkpoint_pt = latest_ckpt
+            else:
+                all_ckpts = sorted(checkpoint_dir.glob("step-*.pt"))
+                if not all_ckpts:
+                    raise ValueError(f"No checkpoints found in `{checkpoint_dir}`")
+                checkpoint_pt = all_ckpts[-1]
+        else:
+            step_str = f"{step_to_load:06d}"
+            matches = list(checkpoint_dir.glob(f"step-{step_str}*.pt"))
+            if len(matches) != 1:
+                raise ValueError(f"Expected 1 checkpoint for step {step_str}, got {len(matches)} in `{checkpoint_dir}`")
+            checkpoint_pt = matches[0]
 
     # Otherwise =>> try looking for a match on `model_id_or_path` on the HF Hub (`VLA_HF_HUB_REPO`)
     else:

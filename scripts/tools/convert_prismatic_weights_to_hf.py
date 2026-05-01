@@ -1,12 +1,8 @@
 """
 convert_prismatic_weights_to_hf.py
 
-Utility script for converting full Prismatic VLM weights (from this repository, in the default "Prismatic" format) to
-the HuggingFace "AutoClasses" (e.g., those defined in `prismatic.extern.hf_*`) for "native" use in `transformers``
-via `trust_remote_code = True`.
-
-Theoretically, these changes should be fully compatible with directly merging the models into `transformers` down the
-line, with first-class support.
+将 Prismatic VLM 权重（本仓库格式）转换为 HuggingFace AutoClasses 格式，
+便于在 `transformers` 中通过 `trust_remote_code=True` 原生加载。
 """
 
 import json
@@ -41,6 +37,8 @@ class HFConvertConfig:
     output_hf_model_hub_path: str = (                                   # Path to HF Hub Path for "final" HF model
         "TRI-ML/prismatic-siglip-224px-7b"                              #   => huggingface.co/TRI-ML/prismatic-{...}
     )
+
+    tokenizer_padding_side: str = "right"                               # 生成/批量推理需要时可改为 left
 
     # HF Hub Credentials (required for Gated Models like LLaMa-2)
     hf_token: Union[str, Path] = Path(".hf_token")                      # Environment variable or Path to HF Token
@@ -134,11 +132,16 @@ def convert_prismatic_weights_to_hf(cfg: HFConvertConfig) -> None:
         torch_dtype=torch.bfloat16,
     )
 
-    # Instantiate & Add Pad to Tokenizer =>> following `prismatic.models.materialize.get_llm_backbone_and_tokenizer`
-    #   TODO (siddk) :: Implement batched generation -- in which case this should set `padding_side = "left"`!
+    # 实例化 Tokenizer 并补齐 PAD（与 `prismatic.models.materialize.get_llm_backbone_and_tokenizer` 对齐）
     print("[*] Instantiating and Patching Tokenizer, LLM Config")
+    padding_side = cfg.tokenizer_padding_side.strip().lower()
+    if padding_side not in {"left", "right"}:
+        raise ValueError("tokenizer_padding_side must be 'left' or 'right'")
     tokenizer = AutoTokenizer.from_pretrained(
-        hf_config.hf_llm_id, model_max_length=hf_config.llm_max_length, token=cfg.hf_token, padding_side="right"
+        hf_config.hf_llm_id,
+        model_max_length=hf_config.llm_max_length,
+        token=cfg.hf_token,
+        padding_side=padding_side,
     )
     tokenizer.add_special_tokens({"pad_token": "<PAD>"})
     tokenizer.init_kwargs.pop("add_prefix_space", None)  # Pop to prevent unnecessary warning on reload...
