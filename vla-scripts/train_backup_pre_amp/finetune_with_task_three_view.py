@@ -330,10 +330,6 @@ def finetune(cfg: FinetuneThreeViewConfig) -> None:
     }
 
     with tqdm.tqdm(total=cfg.max_steps, leave=False) as progress:
-        # 强行将可训练权重提升为 float32
-        for param in trainable_params:
-            param.data = param.data.to(torch.float32)
-        scaler = torch.cuda.amp.GradScaler()
         vla.train()
         optimizer.zero_grad()
         for batch_idx, batch in enumerate(dataloader):
@@ -495,7 +491,7 @@ def finetune(cfg: FinetuneThreeViewConfig) -> None:
                 metrics["applied_cue_names"] = ""
 
             normalized_loss = total_loss / cfg.grad_accumulation_steps
-            scaler.scale(normalized_loss).backward()
+            normalized_loss.backward()
 
             for metric_name, value in metrics.items():
                 if metric_name in recent_metrics:
@@ -529,14 +525,7 @@ def finetune(cfg: FinetuneThreeViewConfig) -> None:
                 wandb.log({"VLA Train/Learning Rate": scheduler.get_last_lr()[0]}, step=log_step)
 
             if (batch_idx + 1) % cfg.grad_accumulation_steps == 0:
-                scaler.unscale_(optimizer)
-
-                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
-
-                scaler.step(optimizer)
-
-                scaler.update()
-
+                optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 progress.update()

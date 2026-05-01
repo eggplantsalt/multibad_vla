@@ -723,7 +723,7 @@ def save_training_checkpoint(
 
     # Merge LoRA weights into base model and save resulting model checkpoint
     # Note: Can be very slow on some devices; if so, we recommend merging offline
-    if False:  # 物理阻断：全面禁止在训练中重载基座模型与合并权重
+    if cfg.use_lora and cfg.merge_lora_during_training:
         base_vla = AutoModelForVision2Seq.from_pretrained(
             cfg.vla_path, torch_dtype=torch.float16, low_cpu_mem_usage=True, trust_remote_code=True
         )
